@@ -2,6 +2,8 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig, Plugin } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
+import { serverBotManager } from './src/core/server/bot-runner.ts';
 
 const derivProxyPlugin = (): Plugin => ({
   name: 'deriv-api-proxy',
@@ -123,6 +125,51 @@ const derivProxyPlugin = (): Plugin => ({
         return;
       }
 
+      // Bot Status Endpoint
+      if (url === '/api/bot/status' && req.method === 'GET') {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify(serverBotManager.getStatus()));
+        return;
+      }
+
+      // Bot Start Endpoint
+      if (url === '/api/bot/start' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const config = JSON.parse(body || '{}');
+            const status = await serverBotManager.start(config);
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(status));
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+        return;
+      }
+
+      // Bot Stop Endpoint
+      if (url === '/api/bot/stop' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const status = serverBotManager.stop(parsed.reason || 'user_action');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(status));
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+        return;
+      }
+
       next();
     });
   },
@@ -130,7 +177,54 @@ const derivProxyPlugin = (): Plugin => ({
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), derivProxyPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      derivProxyPlugin(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg', 'logo.jpg'],
+        manifest: {
+          id: '/',
+          name: 'G-Squad Mobile Trading Bot',
+          short_name: 'G-Squad',
+          description: 'Real-time mobile synthetic indices automated trading bot with risk management.',
+          theme_color: '#0f172a',
+          background_color: '#0f172a',
+          display: 'standalone',
+          orientation: 'portrait',
+          start_url: '/',
+          scope: '/',
+          icons: [
+            {
+              src: '/pwa-192x192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/pwa-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/pwa-maskable-512x512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+          ],
+        },
+        workbox: {
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff,woff2}'],
+        },
+        devOptions: {
+          enabled: true,
+          type: 'module',
+        },
+      }),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),
@@ -138,6 +232,9 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      host: '0.0.0.0',
+      allowedHosts: true as const,
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },

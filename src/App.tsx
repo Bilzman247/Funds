@@ -4,17 +4,35 @@ import { Header } from './components/Header';
 import { BottomNav } from './components/BottomNav';
 import { DashboardTab } from './components/DashboardTab';
 import { SettingsTab } from './components/SettingsTab';
-import { TabType, AccountType, BotConfig, Trade, MarketSymbol, DerivAccount, AuthInfo } from './types';
+import { ToastContainer } from './components/ToastContainer';
+import { TabType, AccountType, BotConfig, Trade, MarketSymbol, DerivAccount, AuthInfo, ToastItem } from './types';
 import { initiateLogin, handleOAuthCallback, logout } from './core/auth/oauth.ts';
 import { fetchAccounts, getWebSocketOTP } from './core/auth/accounts.ts';
 import { storage } from './core/auth/storage.ts';
 import { useDerivWS } from './core/react/useDerivWS.ts';
 import { DERIV_CONFIG } from './core/config/urls.ts';
+import { soundAlerts } from './core/audio/alerts.ts';
+import { MomentumStochasticEngine } from './core/strategy/momentum-stochastic.ts';
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   
+  // Toast notifications state
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+
+  const showToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { ...toast, id }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, toast.duration || 4500);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   // Deriv Authentication & Account States
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
@@ -23,10 +41,10 @@ export default function App() {
   const [otpWsUrl, setOtpWsUrl] = useState<string | undefined>(undefined);
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
 
-  // Trading & Bot States
+  // Trading & Bot States - Balance is NULL until user connects!
   const [accountType, setAccountType] = useState<AccountType>('demo');
-  const [balance, setBalance] = useState<number>(10000.00);
-  const [isBotRunning, setIsBotRunning] = useState<boolean>(false);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [isBotRunning, setIsBotRunning] = useState<boolean>(() => storage.getBotRunning());
   const [totalProfit, setTotalProfit] = useState<number>(0);
   const [winCount, setWinCount] = useState<number>(0);
   const [lossCount, setLossCount] = useState<number>(0);
@@ -47,16 +65,34 @@ export default function App() {
     { id: 'CRASH1000', name: 'Crash 1000 Index', price: 11200.50, change: -0.65, category: 'Boom/Crash' },
   ];
 
-  const [currentSymbol, setCurrentSymbol] = useState<MarketSymbol>(symbols[3]); // Volatility 75 Index
-  const [botConfig, setBotConfig] = useState<BotConfig>({
+  const defaultBotConfig: BotConfig = {
     strategy: 'martingale',
-    stake: 5.00,
+    stake: 1.00,
     takeProfit: 50.00,
     stopLoss: 100.00,
-    multiplier: 2,
+    multiplier: 1.5,
     targetRuns: 50,
     symbol: 'R_75',
+  };
+
+  const [botConfig, setBotConfig] = useState<BotConfig>(() => {
+    const saved = storage.getBotConfig();
+    return saved ? { ...defaultBotConfig, ...saved } : defaultBotConfig;
   });
+
+  const [currentSymbol, setCurrentSymbol] = useState<MarketSymbol>(() => {
+    const matched = symbols.find(s => s.id === botConfig.symbol);
+    return matched || symbols[3];
+  });
+
+  // Fixed Momentum Volatility Breakout Deviation Calculator with Stochastic oscillator engine
+  const strategyEngineRef = useRef<MomentumStochasticEngine>(new MomentumStochasticEngine());
+
+  // Current dynamic stake (e.g. $1.00 base, multiplies by 1.5x on loss)
+  const currentStakeRef = useRef<number>(botConfig.stake);
+  useEffect(() => {
+    currentStakeRef.current = botConfig.stake;
+  }, [botConfig.stake]);
 
   // Real Deriv WebSocket Client Hook
   const { ws, isConnected, subscribe } = useDerivWS({
@@ -87,16 +123,27 @@ export default function App() {
               const active = fetchedAccounts[0];
               setActiveAccount(active);
               setAccountType(active.is_virtual ? 'demo' : 'real');
-              if (typeof active.balance === 'number' && active.balance > 0) {
+              if (typeof active.balance === 'number') {
                 setBalance(active.balance);
               }
 
               // Generate authenticated WebSocket OTP URL
               const otpUrl = await getWebSocketOTP(active.account_id, auth, DERIV_CONFIG.appId);
               setOtpWsUrl(otpUrl);
+
+              showToast({
+                type: 'success',
+                title: 'Deriv Connected! 🎉',
+                message: `Logged in to account ${active.account_id} with live balance.`,
+              });
             }
-          } catch (err) {
+          } catch (err: any) {
             console.error('Deriv OAuth login failed:', err);
+            showToast({
+              type: 'error',
+              title: 'Login Failed',
+              message: err?.message || 'Could not authenticate with Deriv.',
+            });
           } finally {
             setIsConnecting(false);
           }
@@ -104,7 +151,7 @@ export default function App() {
         }
       }
 
-      // Restore existing stored session if valid
+      // Restore existing stored session if valid (Never logged out when tab closes!)
       const existingAuth = storage.getAuthInfo();
       if (existingAuth && existingAuth.access_token) {
         setAuthInfo(existingAuth);
@@ -117,7 +164,7 @@ export default function App() {
           const active = storedAccounts.find(a => a.account_id === activeId) || storedAccounts[0];
           setActiveAccount(active);
           setAccountType(active.is_virtual ? 'demo' : 'real');
-          if (typeof active.balance === 'number' && active.balance > 0) {
+          if (typeof active.balance === 'number') {
             setBalance(active.balance);
           }
         } else {
@@ -127,6 +174,9 @@ export default function App() {
             if (accs.length > 0) {
               setActiveAccount(accs[0]);
               setAccountType(accs[0].is_virtual ? 'demo' : 'real');
+              if (typeof accs[0].balance === 'number') {
+                setBalance(accs[0].balance);
+              }
             }
           }).catch(() => {});
         }
@@ -134,14 +184,15 @@ export default function App() {
     };
 
     initAuth();
-  }, []);
+  }, [showToast]);
 
-  // 2. Real Deriv WebSocket Live Tick Subscription
+  // 2. Real Deriv WebSocket Live Tick Subscription & Strategy Feed
   const prevPriceRef = useRef<number>(currentSymbol.price);
   useEffect(() => {
     if (!isConnected || !ws) return;
 
-    // Subscribe to live tick stream from Deriv API for current symbol
+    strategyEngineRef.current.addTick(currentSymbol.price);
+
     const unsubscribe = subscribe({ ticks: currentSymbol.id }, (data: any) => {
       if (data && data.tick && typeof data.tick.quote === 'number') {
         const livePrice = data.tick.quote;
@@ -149,6 +200,8 @@ export default function App() {
         const priceDiff = livePrice - previous;
         const percentChange = +( (priceDiff / previous) * 100 ).toFixed(2);
         prevPriceRef.current = livePrice;
+
+        strategyEngineRef.current.addTick(livePrice);
 
         setCurrentSymbol((prev) => ({
           ...prev,
@@ -163,70 +216,180 @@ export default function App() {
     };
   }, [isConnected, ws, currentSymbol.id, subscribe]);
 
-  // Fallback tick generator if WebSocket is reconnecting
+  // 3. Real Deriv Live Balance Subscription
   useEffect(() => {
-    if (isConnected) return; // Do not use simulation when real Deriv WS is live
+    if (!isConnected || !ws || !isLoggedIn) return;
 
-    const tickInterval = setInterval(() => {
-      setCurrentSymbol((prev) => {
-        const delta = (Math.random() - 0.48) * (prev.price * 0.0008);
-        const newPrice = Math.max(10, prev.price + delta);
-        const newChange = +(prev.change + (Math.random() - 0.5) * 0.05).toFixed(2);
-        return { ...prev, price: newPrice, change: newChange };
-      });
-    }, 1200);
+    const unsubBalance = subscribe({ balance: 1 }, (data: any) => {
+      if (data && data.balance && typeof data.balance.balance === 'number') {
+        setBalance(data.balance.balance);
+      }
+    });
 
-    return () => clearInterval(tickInterval);
-  }, [isConnected]);
+    return () => {
+      if (unsubBalance) unsubBalance();
+    };
+  }, [isConnected, ws, isLoggedIn, subscribe]);
 
-  // 3. Automated Bot Trading Loop
-  useEffect(() => {
-    if (!isBotRunning) return;
+  // 4. Background Persistent Bot Sync (runs even when user was offline or closed tab!)
+  const syncServerBotStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bot/status');
+      if (!res.ok) return;
+      const status = await res.json();
 
-    const botInterval = setInterval(() => {
-      // Check take profit or stop loss limits
-      if (totalProfit >= botConfig.takeProfit || totalProfit <= -botConfig.stopLoss) {
+      if (status.isRunning) {
+        setIsBotRunning(true);
+        storage.saveBotRunning(true);
+        if (typeof status.totalProfit === 'number') setTotalProfit(status.totalProfit);
+        if (typeof status.winCount === 'number') setWinCount(status.winCount);
+        if (typeof status.lossCount === 'number') setLossCount(status.lossCount);
+        if (Array.isArray(status.trades)) setTrades(status.trades);
+        if (typeof status.balance === 'number') setBalance(status.balance);
+      } else if (storage.getBotRunning() && status.stoppedReason) {
+        // Stopped on server while user was away / offline!
         setIsBotRunning(false);
-        return;
-      }
+        storage.saveBotRunning(false);
+        if (typeof status.totalProfit === 'number') setTotalProfit(status.totalProfit);
+        if (typeof status.winCount === 'number') setWinCount(status.winCount);
+        if (typeof status.lossCount === 'number') setLossCount(status.lossCount);
+        if (Array.isArray(status.trades)) setTrades(status.trades);
+        if (typeof status.balance === 'number') setBalance(status.balance);
 
-      // Execute automated trade
-      const isWin = Math.random() > 0.44; // ~56% win probability
-      const profitAmount = isWin ? botConfig.stake * 0.95 : -botConfig.stake;
-      const newTrade: Trade = {
-        id: Math.random().toString(36).substring(2, 9),
-        contractId: Math.floor(10000000 + Math.random() * 90000000).toString(),
-        symbol: currentSymbol.id,
-        symbolName: currentSymbol.name,
-        type: Math.random() > 0.5 ? 'CALL' : 'PUT',
-        stake: botConfig.stake,
-        payout: +(botConfig.stake * 1.95).toFixed(2),
-        status: isWin ? 'WIN' : 'LOSS',
-        profit: profitAmount,
-        entryPrice: currentSymbol.price,
-        exitPrice: currentSymbol.price + (isWin ? 2.5 : -2.5),
-        timestamp: new Date().toLocaleTimeString(),
-      };
-
-      setTrades((prev) => [newTrade, ...prev]);
-      setBalance((prev) => +(prev + profitAmount).toFixed(2));
-      setTotalProfit((prev) => +(prev + profitAmount).toFixed(2));
-
-      if (isWin) {
-        setWinCount((prev) => prev + 1);
-        if (botConfig.strategy === 'martingale' && botConfig.stake > 5) {
-          setBotConfig((c) => ({ ...c, stake: 5 }));
-        }
-      } else {
-        setLossCount((prev) => prev + 1);
-        if (botConfig.strategy === 'martingale') {
-          setBotConfig((c) => ({ ...c, stake: +(c.stake * 2).toFixed(2) }));
+        if (status.stoppedReason === 'take_profit') {
+          soundAlerts.playTakeProfit();
+          showToast({
+            type: 'success',
+            title: 'Take-Profit Hit! 🎯',
+            message: `Target reached! Bot secured +$${status.totalProfit.toFixed(2)} while running in background.`,
+            duration: 6000,
+          });
+        } else if (status.stoppedReason === 'stop_loss') {
+          soundAlerts.playStopLoss();
+          showToast({
+            type: 'error',
+            title: 'Stop-Loss Triggered! 🛑',
+            message: `Risk limit reached (-$${Math.abs(status.totalProfit).toFixed(2)}). Bot halted to protect capital.`,
+            duration: 6000,
+          });
+        } else if (status.stoppedReason === 'max_runs') {
+          soundAlerts.playTakeProfit();
+          showToast({
+            type: 'info',
+            title: 'Max Runs Completed! 🏁',
+            message: `Executed all ${botConfig.targetRuns} runs. Net P/L: $${status.totalProfit.toFixed(2)}.`,
+            duration: 6000,
+          });
         }
       }
-    }, 3500);
+    } catch (e) {
+      // ignore
+    }
+  }, [botConfig.targetRuns, showToast]);
 
-    return () => clearInterval(botInterval);
-  }, [isBotRunning, botConfig, currentSymbol, totalProfit]);
+  // Periodic poll + window focus / online event listeners
+  useEffect(() => {
+    syncServerBotStatus();
+
+    const handleFocus = () => syncServerBotStatus();
+    const handleOnline = () => syncServerBotStatus();
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    const interval = setInterval(() => {
+      syncServerBotStatus();
+    }, 2500);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleFocus);
+      clearInterval(interval);
+    };
+  }, [syncServerBotStatus]);
+
+  // Handle toggling the bot on / off
+  const handleToggleBot = async () => {
+    soundAlerts.unlockAudio();
+
+    if (!isLoggedIn || !authInfo || !activeAccount) {
+      soundAlerts.playBotStop();
+      showToast({
+        type: 'warning',
+        title: 'Connection Required ⚠️',
+        message: 'Please connect your Deriv account to view your balance and trade.',
+      });
+      setActiveTab('settings');
+      return;
+    }
+
+    if (balance === null || balance < botConfig.stake) {
+      soundAlerts.playBotStop();
+      showToast({
+        type: 'error',
+        title: 'Insufficient Balance ⚠️',
+        message: `Your balance ($${balance ? balance.toFixed(2) : '0.00'}) is lower than the initial stake ($${botConfig.stake.toFixed(2)}).`,
+      });
+      return;
+    }
+
+    if (isBotRunning) {
+      // User manual stop action
+      setIsBotRunning(false);
+      storage.saveBotRunning(false);
+      soundAlerts.playBotStop();
+
+      try {
+        await fetch('/api/bot/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'user_action' }),
+        });
+      } catch (e) {
+        // ignore
+      }
+
+      showToast({
+        type: 'info',
+        title: 'Bot Stopped ⏹️',
+        message: 'Automated trading has been paused by the user.',
+      });
+    } else {
+      // User start action - persistent background execution!
+      currentStakeRef.current = botConfig.stake;
+      setIsBotRunning(true);
+      storage.saveBotRunning(true);
+      soundAlerts.playBotStart();
+
+      try {
+        await fetch('/api/bot/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: authInfo.access_token,
+            accountId: activeAccount.account_id,
+            symbol: currentSymbol.id,
+            symbolName: currentSymbol.name,
+            currency: activeAccount.currency || 'USD',
+            stake: botConfig.stake,
+            takeProfit: botConfig.takeProfit,
+            stopLoss: botConfig.stopLoss,
+            targetRuns: botConfig.targetRuns,
+          }),
+        });
+      } catch (e) {
+        console.warn('Server bot start error:', e);
+      }
+
+      showToast({
+        type: 'info',
+        title: 'Bot Started 🚀',
+        message: `Trading ${currentSymbol.name} in background (Max Runs: ${botConfig.targetRuns}, Stake: $${botConfig.stake.toFixed(2)}).`,
+      });
+    }
+  };
 
   // Login handler
   const handleLogin = async () => {
@@ -237,8 +400,13 @@ export default function App() {
         redirectUri: DERIV_CONFIG.redirectUri,
         scopes: DERIV_CONFIG.oauthScopes,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to initiate Deriv login:', err);
+      showToast({
+        type: 'error',
+        title: 'Login Error',
+        message: err.message || 'Failed to start Deriv OAuth flow.',
+      });
       setIsConnecting(false);
     }
   };
@@ -252,7 +420,25 @@ export default function App() {
     setActiveAccount(null);
     setOtpWsUrl(undefined);
     setAccountType('demo');
-    setBalance(10000.00);
+    setBalance(null);
+    setIsBotRunning(false);
+    storage.saveBotRunning(false);
+    setTrades([]);
+    setTotalProfit(0);
+    setWinCount(0);
+    setLossCount(0);
+
+    fetch('/api/bot/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'logout' }),
+    }).catch(() => {});
+
+    showToast({
+      type: 'info',
+      title: 'Logged Out',
+      message: 'Deriv account disconnected. Balance hidden.',
+    });
   };
 
   // Account switch handler
@@ -263,7 +449,7 @@ export default function App() {
     setActiveAccount(selected);
     storage.saveActiveAccountId(accountId);
     setAccountType(selected.is_virtual ? 'demo' : 'real');
-    if (typeof selected.balance === 'number' && selected.balance > 0) {
+    if (typeof selected.balance === 'number') {
       setBalance(selected.balance);
     }
 
@@ -275,29 +461,74 @@ export default function App() {
         console.warn('Failed to refresh OTP for account:', e);
       }
     }
+
+    showToast({
+      type: 'info',
+      title: 'Account Switched',
+      message: `Active account: ${selected.account_id} (${selected.is_virtual ? 'Demo' : 'Real'})`,
+    });
   };
 
   const handleToggleAccountType = (type: AccountType) => {
+    if (!isLoggedIn) {
+      showToast({
+        type: 'warning',
+        title: 'Connect Account',
+        message: 'Log in to Deriv to switch between your real and demo accounts.',
+      });
+      setActiveTab('settings');
+      return;
+    }
+
     setAccountType(type);
-    // Find matching real or demo account if logged in
-    if (isLoggedIn && accounts.length > 0) {
+    if (accounts.length > 0) {
       const match = accounts.find(a => type === 'demo' ? a.is_virtual : !a.is_virtual);
       if (match) {
         handleSelectAccount(match.account_id);
       }
-    } else {
-      setBalance(type === 'demo' ? 10000.00 : 250.00);
     }
   };
+
+  // Refresh balance manually
+  const handleRefreshBalance = async () => {
+    if (!authInfo || !isLoggedIn) return;
+    try {
+      const fetchedAccounts = await fetchAccounts(authInfo, DERIV_CONFIG.appId);
+      setAccounts(fetchedAccounts);
+      if (activeAccount) {
+        const updated = fetchedAccounts.find(a => a.account_id === activeAccount.account_id);
+        if (updated && typeof updated.balance === 'number') {
+          setBalance(updated.balance);
+          showToast({
+            type: 'success',
+            title: 'Balance Synchronized',
+            message: `Updated balance: $${updated.balance.toFixed(2)}`,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Balance refresh failed:', e);
+    }
+  };
+
+  const handleUpdateConfig = useCallback((cfg: BotConfig) => {
+    setBotConfig(cfg);
+    storage.saveBotConfig(cfg);
+    const matched = symbols.find(s => s.id === cfg.symbol);
+    if (matched) setCurrentSymbol(matched);
+  }, [symbols]);
 
   return (
     <>
       {showSplash && <SplashScreen onFinish={handleFinishSplash} />}
 
-      {/* Mobile Device Only Container (Mobile Viewport Frame) */}
+      {/* Mobile Device Only Container */}
       <div className="min-h-screen bg-slate-100 flex items-center justify-center p-0 sm:py-6 sm:px-4">
         <div className="w-full sm:max-w-[412px] h-screen sm:h-[844px] bg-slate-50 shadow-2xl sm:rounded-[40px] sm:border-[8px] sm:border-slate-800 flex flex-col overflow-hidden relative">
           
+          {/* Toast Notification Container */}
+          <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
           {/* Header */}
           <Header
             balance={balance}
@@ -306,6 +537,7 @@ export default function App() {
             isConnected={isConnected}
             activeAccount={activeAccount}
             isLoggedIn={isLoggedIn}
+            onConnectClick={() => setActiveTab('settings')}
           />
 
           {/* Main Content Area */}
@@ -313,8 +545,9 @@ export default function App() {
             {activeTab === 'dashboard' && (
               <DashboardTab
                 balance={balance}
+                isLoggedIn={isLoggedIn}
                 isBotRunning={isBotRunning}
-                onToggleBot={() => setIsBotRunning(!isBotRunning)}
+                onToggleBot={handleToggleBot}
                 botConfig={botConfig}
                 trades={trades}
                 currentSymbol={currentSymbol}
@@ -330,19 +563,9 @@ export default function App() {
                 accountType={accountType}
                 onToggleAccount={handleToggleAccountType}
                 balance={balance}
-                onResetBalance={(b) => {
-                  setBalance(b);
-                  setTotalProfit(0);
-                  setWinCount(0);
-                  setLossCount(0);
-                  setTrades([]);
-                }}
+                onRefreshBalance={handleRefreshBalance}
                 botConfig={botConfig}
-                onChangeConfig={(cfg) => {
-                  setBotConfig(cfg);
-                  const matched = symbols.find(s => s.id === cfg.symbol);
-                  if (matched) setCurrentSymbol(matched);
-                }}
+                onChangeConfig={handleUpdateConfig}
                 symbols={symbols}
                 isLoggedIn={isLoggedIn}
                 activeAccount={activeAccount}

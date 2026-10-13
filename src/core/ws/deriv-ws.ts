@@ -223,8 +223,8 @@ export class DerivWSClient {
       }
     }
 
-    // Handle streaming subscriptions (ticks, proposal, etc.)
-    if (data.tick) {
+    // Handle streaming subscriptions (ticks, balance, proposal_open_contract, etc.)
+    if (data.tick || data.balance || data.proposal_open_contract || data.subscription || data.msg_type) {
       this.subscriptions.forEach((cb) => cb(data));
     }
   }

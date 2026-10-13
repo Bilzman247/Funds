@@ -1,10 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { BotConfig, Trade, MarketSymbol } from '../types';
-import { Activity, Bot, Play, Square, TrendingUp, TrendingDown, Terminal } from 'lucide-react';
+import { Activity, Bot, Play, Square, TrendingUp, TrendingDown, Terminal, ShieldAlert, LogIn } from 'lucide-react';
 import { Logo } from './Logo';
 
 interface DashboardTabProps {
-  balance: number;
+  balance: number | null;
+  isLoggedIn: boolean;
   isBotRunning: boolean;
   onToggleBot: () => void;
   botConfig: BotConfig;
@@ -18,6 +19,7 @@ interface DashboardTabProps {
 
 export const DashboardTab: React.FC<DashboardTabProps> = ({
   balance,
+  isLoggedIn,
   isBotRunning,
   onToggleBot,
   botConfig,
@@ -39,6 +41,28 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   return (
     <div className="w-full space-y-3 p-3 pb-0 select-none font-sans">
       
+      {/* Connection Notice if disconnected */}
+      {!isLoggedIn && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center justify-between shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
+              <ShieldAlert className="w-4 h-4 text-amber-700" />
+            </div>
+            <div>
+              <div className="font-bold text-xs text-amber-950">Deriv Connection Required</div>
+              <div className="text-[10px] text-amber-800">Log in to view live balance and enable auto trading</div>
+            </div>
+          </div>
+          <button
+            onClick={onNavigateSettings}
+            className="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shadow-xs flex items-center gap-1 shrink-0"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Connect</span>
+          </button>
+        </div>
+      )}
+
       {/* 1. Market Ticker Bar */}
       <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs flex items-center justify-between">
         <div className="flex items-center gap-2.5">
@@ -61,7 +85,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       <div className="bg-blue-600 text-white rounded-2xl p-3 shadow-md space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-blue-100 font-medium">Session Performance</span>
-          <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-bold">{botConfig.strategy}</span>
+          <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded font-bold">{isBotRunning ? 'RUNNING' : 'STANDBY'}</span>
         </div>
 
         <div className="grid grid-cols-2 gap-2">
@@ -89,13 +113,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
             <span className="font-bold text-rose-300">{lossCount}</span>
           </div>
           <div>
-            <span className="text-blue-200 text-[10px]">Run: </span>
+            <span className="text-blue-200 text-[10px]">Runs: </span>
             <span className="font-bold text-white">{totalTrades}/{botConfig.targetRuns}</span>
           </div>
         </div>
       </div>
 
-      {/* 3. Trading Button below Session Performance Card (Bot icon on left, named Start Bot / Stop Bot) */}
+      {/* 3. Trading Button below Session Performance Card */}
       <div>
         <button
           onClick={onToggleBot}
@@ -110,31 +134,36 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </button>
       </div>
 
-      {/* 4. Redesigned New Console Log Card (App background color, full width, flat/non-floating, zero gap with bottom nav) */}
+      {/* 4. Console Log Card - Newest entries at top, small compact font */}
       <div className="w-full bg-slate-50 border-t border-slate-200 p-3 space-y-2 mb-0 pb-0">
         <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
           <div className="flex items-center gap-1.5">
             <Terminal className="w-3.5 h-3.5 text-blue-600" />
             <span className="font-bold text-[11px] uppercase tracking-wider text-slate-700">Console Log</span>
           </div>
-          <span className="text-[10px] text-slate-500 font-mono">{isBotRunning ? 'Live' : 'Idle'}</span>
+          <span className="text-[10px] text-slate-500 font-mono">{isBotRunning ? 'Active' : 'Idle'}</span>
         </div>
 
-        <div className="h-32 overflow-y-auto space-y-1 font-mono text-[11px] pr-1 scrollbar-thin text-slate-700">
-          <div>[{new Date().toLocaleTimeString()}] Bot initialized on {currentSymbol.name}.</div>
+        <div className="h-32 overflow-y-auto space-y-1 font-mono text-[9.5px] leading-snug pr-1 scrollbar-thin text-slate-700">
+          {/* Newest active status at the top */}
           {isBotRunning && (
-            <div className="text-blue-600">[{new Date().toLocaleTimeString()}] Executing {botConfig.strategy} strategy...</div>
+            <div className="text-blue-600 font-medium">[{new Date().toLocaleTimeString()}] Bot active: scanning {currentSymbol.name} and executing trades...</div>
           )}
-          {trades.length === 0 ? (
-            <div className="text-slate-400 italic">No logs recorded yet.</div>
-          ) : (
-            trades.map((t) => (
-              <div key={t.id} className={`${t.status === 'WIN' ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}`}>
-                [{t.timestamp}] {t.symbolName} {t.type} (${t.stake}) → {t.status} ({t.profit >= 0 ? '+' : ''}${t.profit.toFixed(2)})
-              </div>
-            ))
-          )}
-          <div ref={consoleEndRef} />
+
+          {/* Newest trades listed from top */}
+          {trades.map((t) => (
+            <div key={t.id} className={`${t.status === 'WIN' ? 'text-emerald-600 font-medium' : 'text-rose-600 font-medium'}`}>
+              [{t.timestamp}] {t.symbolName} {t.type} (${t.stake.toFixed(2)}) → {t.status} ({t.profit >= 0 ? '+' : ''}${t.profit.toFixed(2)})
+            </div>
+          ))}
+
+          {/* Initial connection line */}
+          <div className="text-slate-400">
+            [{new Date().toLocaleTimeString()}]{' '}
+            {!isLoggedIn
+              ? 'Deriv disconnected. Log in via Settings to stream balance and trade.'
+              : `Connected to Deriv. Active market: ${currentSymbol.name}.`}
+          </div>
         </div>
       </div>
 

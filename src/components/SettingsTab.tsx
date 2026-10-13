@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
-import { AccountType, BotConfig, StrategyType, MarketSymbol, DerivAccount } from '../types';
-import { Sliders, RotateCcw, LogIn, LogOut, CheckCircle2, ExternalLink, ShieldCheck, User } from 'lucide-react';
-import { DERIV_CONFIG } from '../core/config/urls.ts';
+import React, { useState, useEffect } from 'react';
+import { AccountType, BotConfig, MarketSymbol, DerivAccount } from '../types';
+import { Sliders, RotateCcw, LogIn, LogOut, CheckCircle2, ExternalLink, ShieldCheck, User, Smartphone } from 'lucide-react';
 import { getSignUpUrl } from '../core/auth/oauth.ts';
+import { PWAInstallButton } from './PWAInstallButton.tsx';
 
 interface SettingsTabProps {
   accountType: AccountType;
   onToggleAccount: (type: AccountType) => void;
-  balance: number;
-  onResetBalance: (newBalance: number) => void;
+  balance: number | null;
+  onRefreshBalance?: () => void;
   botConfig: BotConfig;
   onChangeConfig: (config: BotConfig) => void;
   symbols: MarketSymbol[];
@@ -25,7 +25,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   accountType,
   onToggleAccount,
   balance,
-  onResetBalance,
+  onRefreshBalance,
   botConfig,
   onChangeConfig,
   symbols,
@@ -37,14 +37,59 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
   onSelectAccount,
   isConnecting = false,
 }) => {
-  const [showConfigDetails, setShowConfigDetails] = useState(false);
+  // Smooth string buffers for numeric inputs to avoid jumping/locking while typing
+  const [stakeStr, setStakeStr] = useState<string>(String(botConfig.stake));
+  const [tpStr, setTpStr] = useState<string>(String(botConfig.takeProfit));
+  const [slStr, setSlStr] = useState<string>(String(botConfig.stopLoss));
+  const [runsStr, setRunsStr] = useState<string>(String(botConfig.targetRuns || 50));
 
-  const strategies: { id: StrategyType; name: string; desc: string }[] = [
-    { id: 'martingale', name: 'Martingale Bot', desc: 'Doubles stake after each loss to recover on next win.' },
-    { id: 'dalembert', name: 'D’Alembert Bot', desc: 'Increases stake by 1 unit after loss and decreases after win.' },
-    { id: 'rsi', name: 'Smart RSI Trend Bot', desc: 'Triggers trades automatically based on RSI conditions.' },
-    { id: 'accumulator', name: 'Growth Accumulator', desc: 'Compounds profits progressively with strict risk limits.' },
-  ];
+  useEffect(() => {
+    setStakeStr(String(botConfig.stake));
+  }, [botConfig.stake]);
+
+  useEffect(() => {
+    setTpStr(String(botConfig.takeProfit));
+  }, [botConfig.takeProfit]);
+
+  useEffect(() => {
+    setSlStr(String(botConfig.stopLoss));
+  }, [botConfig.stopLoss]);
+
+  useEffect(() => {
+    setRunsStr(String(botConfig.targetRuns || 50));
+  }, [botConfig.targetRuns]);
+
+  const handleStakeChange = (val: string) => {
+    setStakeStr(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed > 0) {
+      onChangeConfig({ ...botConfig, stake: parsed });
+    }
+  };
+
+  const handleRunsChange = (val: string) => {
+    setRunsStr(val);
+    const parsed = parseInt(val, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      onChangeConfig({ ...botConfig, targetRuns: parsed });
+    }
+  };
+
+  const handleTpChange = (val: string) => {
+    setTpStr(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed > 0) {
+      onChangeConfig({ ...botConfig, takeProfit: parsed });
+    }
+  };
+
+  const handleSlChange = (val: string) => {
+    setSlStr(val);
+    const parsed = parseFloat(val);
+    if (!isNaN(parsed) && parsed > 0) {
+      onChangeConfig({ ...botConfig, stopLoss: parsed });
+    }
+  };
 
   return (
     <div className="w-full px-2 sm:px-4 space-y-4 pb-12 select-none font-sans">
@@ -131,7 +176,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <span>{isConnecting ? 'Connecting to Deriv...' : 'Log in with Deriv'}</span>
             </button>
 
-            <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center justify-center pt-1">
               <a
                 href={getSignUpUrl()}
                 target="_blank"
@@ -141,47 +186,19 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 <span>Don't have an account? Sign up</span>
                 <ExternalLink className="w-3 h-3" />
               </a>
-
-              <button
-                type="button"
-                onClick={() => setShowConfigDetails(!showConfigDetails)}
-                className="text-[11px] text-slate-400 hover:text-slate-600 underline"
-              >
-                {showConfigDetails ? 'Hide App Config' : 'View App Config'}
-              </button>
             </div>
-
-            {showConfigDetails && (
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[10px] font-mono text-slate-600 space-y-1">
-                <div>App ID: <span className="font-bold text-slate-900">{DERIV_CONFIG.appId}</span></div>
-                <div>Redirect URI: <span className="font-bold text-slate-900">{DERIV_CONFIG.redirectUri}</span></div>
-                <div>Scopes: <span className="font-bold text-slate-900">{DERIV_CONFIG.oauthScopes}</span></div>
-              </div>
-            )}
           </div>
         )}
       </div>
 
-      {/* 2. Risk Management & Strategy Parameters Card */}
+      {/* 2. Parameters Card: Only Symbol, Stake, and Risk (Take Profit & Stop Loss) */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
         <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
           <Sliders className="w-4 h-4 text-blue-600" />
-          <span>Risk Management & Parameters</span>
+          <span>Trading & Risk Parameters</span>
         </h3>
 
-        <div>
-          <label className="block text-xs font-semibold text-slate-700 mb-1">Trading Strategy</label>
-          <select
-            value={botConfig.strategy}
-            onChange={(e) => onChangeConfig({ ...botConfig, strategy: e.target.value as StrategyType })}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
-          >
-            {strategies.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} - {s.desc}</option>
-            ))}
-          </select>
-        </div>
-
+        {/* 1. Market Selection */}
         <div>
           <label className="block text-xs font-semibold text-slate-700 mb-1">Synthetic Market</label>
           <select
@@ -195,49 +212,56 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
           </select>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Initial Stake ($)</label>
-            <input
-              type="number"
-              min="0.35"
-              step="0.5"
-              value={botConfig.stake}
-              onChange={(e) => onChangeConfig({ ...botConfig, stake: parseFloat(e.target.value) || 1 })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Target Runs</label>
-            <input
-              type="number"
-              min="1"
-              value={botConfig.targetRuns}
-              onChange={(e) => onChangeConfig({ ...botConfig, targetRuns: parseInt(e.target.value) || 50 })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
-            />
-          </div>
+        {/* 2. Stake Input */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-700 mb-1">Stake ($)</label>
+          <input
+            type="number"
+            min="0.35"
+            step="0.5"
+            value={stakeStr}
+            onChange={(e) => handleStakeChange(e.target.value)}
+            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+            placeholder="e.g. 1.00"
+          />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        {/* 3. Risk Inputs: Take Profit, Stop Loss & Max Runs */}
+        <div className="grid grid-cols-3 gap-2">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Take Profit ($)</label>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Take Profit ($)</label>
             <input
               type="number"
               min="1"
-              value={botConfig.takeProfit}
-              onChange={(e) => onChangeConfig({ ...botConfig, takeProfit: parseFloat(e.target.value) || 20 })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+              step="1"
+              value={tpStr}
+              onChange={(e) => handleTpChange(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+              placeholder="e.g. 50"
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Stop Loss ($)</label>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Stop Loss ($)</label>
             <input
               type="number"
               min="1"
-              value={botConfig.stopLoss}
-              onChange={(e) => onChangeConfig({ ...botConfig, stopLoss: parseFloat(e.target.value) || 50 })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+              step="1"
+              value={slStr}
+              onChange={(e) => handleSlChange(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+              placeholder="e.g. 100"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Max Runs</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={runsStr}
+              onChange={(e) => handleRunsChange(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-medium text-slate-900 focus:outline-none focus:border-blue-500"
+              placeholder="e.g. 50"
             />
           </div>
         </div>
@@ -250,29 +274,55 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         <div className="flex items-center justify-between py-2 border-b border-slate-100">
           <div>
             <div className="font-bold text-xs text-slate-900">Account Mode</div>
-            <div className="text-[11px] text-slate-500">Switch between Demo and Real modes</div>
+            <div className="text-[11px] text-slate-500">
+              {isLoggedIn ? `Active: ${accountType.toUpperCase()} (${activeAccount?.account_id || ''})` : 'Connect account to toggle'}
+            </div>
           </div>
-          <button
-            onClick={() => onToggleAccount(accountType === 'demo' ? 'real' : 'demo')}
-            className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold transition"
-          >
-            Switch to {accountType === 'demo' ? 'Real' : 'Demo'}
-          </button>
+          {isLoggedIn ? (
+            <button
+              onClick={() => onToggleAccount(accountType === 'demo' ? 'real' : 'demo')}
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-xl text-xs font-bold transition"
+            >
+              Switch to {accountType === 'demo' ? 'Real' : 'Demo'}
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400 font-medium">Not Connected</span>
+          )}
         </div>
 
         <div className="flex items-center justify-between py-2">
           <div>
-            <div className="font-bold text-xs text-slate-900">Reset Demo Balance</div>
-            <div className="text-[11px] text-slate-500">Reset demo funds back to $10,000.00</div>
+            <div className="font-bold text-xs text-slate-900">Live Balance Sync</div>
+            <div className="text-[11px] text-slate-500">
+              {isLoggedIn && balance !== null
+                ? `Current: $${balance.toFixed(2)} (${activeAccount?.currency || 'USD'})`
+                : 'Balance only shown upon connecting Deriv'}
+            </div>
           </div>
-          <button
-            onClick={() => onResetBalance(10000)}
-            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset ($10k)</span>
-          </button>
+          {isLoggedIn && onRefreshBalance ? (
+            <button
+              onClick={onRefreshBalance}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Sync Balance</span>
+            </button>
+          ) : (
+            <span className="text-[11px] text-slate-400 italic">—</span>
+          )}
         </div>
+      </div>
+
+      {/* 4. Install Mobile App (APK / PWA) Card */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs space-y-3">
+        <h3 className="font-bold text-sm text-slate-900 flex items-center gap-2">
+          <Smartphone className="w-4 h-4 text-blue-600" />
+          <span>Install Mobile App (APK)</span>
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Install G-Squad onto your phone for a full-screen native experience, home screen launcher icon, and persistent background trading.
+        </p>
+        <PWAInstallButton />
       </div>
 
     </div>

@@ -7,13 +7,12 @@ interface SplashScreenProps {
 
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
   useEffect(() => {
-    // Exactly 6 seconds duration, isolated from parent re-renders
     const timer = setTimeout(() => {
       onFinish();
-    }, 6000);
+    }, 4000);
 
     return () => clearTimeout(timer);
-  }, []); // empty dependency array ensures timer never resets on parent re-renders
+  }, [onFinish]);
 
   return (
     <div 
@@ -24,10 +23,10 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
       <div className="relative flex items-center justify-center pointer-events-none">
         {/* Spinning Outer Ring */}
         <div className="absolute -inset-12 rounded-full border-4 border-dashed border-blue-500 animate-spin" style={{ animationDuration: '4s' }}></div>
-        <div className="absolute -inset-6 rounded-full border-2 border-blue-200 animate-pulse"></div>
+        <div className="absolute -inset-6 rounded-full border-2 border-blue-200"></div>
         
         {/* Logo */}
-        <div className="relative z-10 transform scale-125 shadow-2xl rounded-3xl overflow-hidden pointer-events-auto">
+        <div className="relative z-10 transform scale-125 shadow-2xl rounded-3xl overflow-hidden pointer-events-auto opacity-100">
           <Logo size={96} />
         </div>
       </div>

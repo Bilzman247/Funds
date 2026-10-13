@@ -131,4 +131,31 @@ export const storage = {
     if (typeof window === 'undefined') return null;
     return localStorage.getItem(STORAGE_KEYS.MANUAL_TOKEN);
   },
+
+  // Bot Config & State Persistence across offline/tab close
+  saveBotConfig(config: any): void {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('deriv_bot_config', JSON.stringify(config));
+  },
+
+  getBotConfig(): any | null {
+    if (typeof window === 'undefined') return null;
+    const raw = localStorage.getItem('deriv_bot_config');
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+
+  saveBotRunning(running: boolean): void {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('deriv_bot_running', running ? 'true' : 'false');
+  },
+
+  getBotRunning(): boolean {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('deriv_bot_running') === 'true';
+  },
 };

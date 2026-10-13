@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { serverBotManager } from './src/core/server/bot-runner.ts';
 
 dotenv.config();
 
@@ -116,6 +117,31 @@ app.post('/api/deriv/otp', async (req, res) => {
   } catch (error: any) {
     console.error('Error fetching Deriv OTP:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch Deriv OTP' });
+  }
+});
+
+/**
+ * Persistent Background Bot Routes
+ */
+app.get('/api/bot/status', (req, res) => {
+  res.json(serverBotManager.getStatus());
+});
+
+app.post('/api/bot/start', async (req, res) => {
+  try {
+    const status = await serverBotManager.start(req.body);
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/bot/stop', (req, res) => {
+  try {
+    const status = serverBotManager.stop(req.body.reason || 'user_action');
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
